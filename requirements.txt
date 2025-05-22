@@ -1,0 +1,4 @@
+requests
+beautifulsoup4
+notion-client
+python-dotenv
