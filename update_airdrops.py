@@ -4,6 +4,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from notion_client import Client
 import os
@@ -18,8 +20,14 @@ AIRDROPALERT_URL = "https://airdropalert.com/airdrops/"
 # Keywords to filter out junk
 EXCLUDE_KEYWORDS = ["zealy", "social", "spam", "fake", "discord", "telegram"]
 
+# Set up requests with retries
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+session.mount("https://", HTTPAdapter(max_retries=retries))
+
 def scrape_airdrops_io():
     print("Starting to scrape airdrops.io with Selenium...")
+    driver = None  # Initialize driver to avoid UnboundLocalError
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
@@ -28,10 +36,9 @@ def scrape_airdrops_io():
         driver = webdriver.Chrome(options=chrome_options)
         driver.get(AIRDROPS_IO_URL)
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        time.sleep(3)  # Increased to ensure dynamic content loads
+        time.sleep(3)
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        # TODO: Update this selector based on actual dynamic HTML (inspect airdrops.io)
-        airdrop_containers = soup.find_all("div", class_="airdrop-item")  # Placeholder
+        airdrop_containers = soup.find_all("article", class_="post")  # Updated selector
         if not airdrop_containers:
             print("No airdrop containers found on airdrops.io")
             return []
@@ -39,9 +46,12 @@ def scrape_airdrops_io():
         print(f"Found {len(airdrop_containers)} airdrop containers")
         airdrops = []
         for container in airdrop_containers:
-            name = container.find("h2").text.strip() if container.find("h2") else "Unknown"
-            task_link = container.find("a")["href"] if container.find("a") else ""
-            description = container.find("p").text.strip() if container.find("p") else ""
+            name_tag = container.find("h2")
+            name = name_tag.text.strip() if name_tag else "Unknown"
+            link_tag = container.find("a", class_="read-more")
+            task_link = link_tag["href"] if link_tag and "href" in link_tag.attrs else ""
+            description_tag = container.find("p")
+            description = description_tag.text.strip() if description_tag else ""
             if any(keyword.lower() in name.lower() or keyword.lower() in description.lower() for keyword in EXCLUDE_KEYWORDS):
                 print(f"Filtered out entry: {name} (contains excluded keywords)")
                 continue
@@ -66,13 +76,14 @@ def scrape_airdrops_io():
         print(f"Error scraping airdrops.io with Selenium: {e}")
         return []
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()  # Only quit if driver was successfully created
     return airdrops
 
 def scrape_cryptorank():
     print("Starting to scrape CryptoRank.io...")
     try:
-        response = requests.get(CRYPTORANK_URL, timeout=10)
+        response = session.get(CRYPTORANK_URL, timeout=10)
         response.raise_for_status()
         print(f"Successfully fetched page: {CRYPTORANK_URL}")
     except requests.RequestException as e:
@@ -154,7 +165,7 @@ def scrape_cryptorank():
 def scrape_airdropalert():
     print("Starting to scrape AirdropAlert...")
     try:
-        response = requests.get(AIRDROPALERT_URL, timeout=10)
+        response = session.get(AIRDROPALERT_URL, timeout=10)
         response.raise_for_status()
         print(f"Successfully fetched page: {AIRDROPALERT_URL}")
     except requests.RequestException as e:
@@ -162,13 +173,12 @@ def scrape_airdropalert():
         return []
 
     soup = BeautifulSoup(response.content, "html.parser")
-    # Updated selector to target h2 with links
     airdrop_listings = soup.find_all("h2", string=lambda text: text and any(text.strip().lower() not in EXCLUDE_KEYWORDS for _ in [0]))
     airdrops = []
     for listing in airdrop_listings:
         a_tag = listing.find("a")
         if a_tag:
-            name = a_tag.text.strip()
+            name = a_tag.text.strip() if a_tag.text else "Unknown"
             task_link = a_tag["href"] if "href" in a_tag.attrs else ""
             description_p = listing.find_next("p")
             description = description_p.text.strip() if description_p else ""
@@ -216,7 +226,7 @@ def update_notion(airdrops):
                     "Status": {"select": {"name": airdrop["Status"]}},
                     "Risk Level": {"select": {"name": airdrop["Risk Level"]}},
                     "Value Estimate": {"select": {"name": airdrop["Value Estimate"]}} if airdrop["Value Estimate"] else {"select": {}},
-                    "Task Link": {"url": airdrop["Task Link"]},
+                    "Task Link": {"url": airdrop["Task Link"] if airdrop["Task Link"] else None},
                     "Notes": {"rich_text": [{"text": {"content": airdrop["Notes"]}}]} if airdrop["Notes"] else {"rich_text": []}
                 }
             }
@@ -225,6 +235,7 @@ def update_notion(airdrops):
         print(f"Successfully updated Notion with {len(airdrops)} entries")
     except Exception as e:
         print(f"Error updating Notion: {e}")
+        raise
 
 def main():
     print("Starting main execution...")
