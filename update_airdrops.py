@@ -4,46 +4,100 @@ from notion_client import Client
 import os
 import re
 
-# URLs for scraping (starting with CryptoRank.io)
+# URLs for scraping
+AIRDROPS_IO_URL = "https://airdrops.io/latest/"
 CRYPTORANK_URL = "https://cryptorank.io/drophunting"
+AIRDROPALERT_URL = "https://airdropalert.com/airdrops/"
 
 # Keywords to filter out junk
 EXCLUDE_KEYWORDS = ["zealy", "social", "spam", "fake", "discord", "telegram"]
 
+def scrape_airdrops_io():
+    """Scrape airdrop data from airdrops.io. Returns a list of standardized dictionaries."""
+    print("Starting to scrape airdrops.io...")
+    try:
+        response = requests.get(AIRDROPS_IO_URL, timeout=10)
+        response.raise_for_status()
+        print(f"Successfully fetched page: {AIRDROPS_IO_URL}")
+    except requests.RequestException as e:
+        print(f"Error fetching airdrops.io URL: {e}")
+        return []
+
+    soup = BeautifulSoup(response.content, "html.parser")
+    # TODO: Update the selector based on actual HTML structure
+    airdrop_containers = soup.find_all("div", class_="airdrop-item")  # Placeholder
+    if not airdrop_containers:
+        print("No airdrop containers found on airdrops.io")
+        return []
+
+    print(f"Found {len(airdrop_containers)} airdrop containers")
+    airdrops = []
+    for container in airdrop_containers:
+        name = container.find("h2").text.strip() if container.find("h2") else "Unknown"
+        task_link = container.find("a")["href"] if container.find("a") else ""
+        description = container.find("p").text.strip() if container.find("p") else ""
+
+        # Filter out junk
+        if any(keyword.lower() in name.lower() or keyword.lower() in description.lower() for keyword in EXCLUDE_KEYWORDS):
+            print(f"Filtered out entry: {name} (contains excluded keywords)")
+            continue
+
+        airdrop = {
+            "Project Name": name,
+            "Task Link": task_link,
+            "Status": "Live",
+            "Task Type": "Airdrop",
+            "Cost": "Free",
+            "Time Estimate": "",
+            "Task Method": [],
+            "Chain": "",
+            "Difficulty": "",
+            "Progress": "Not Started",
+            "Risk Level": "DYOR",
+            "Value Estimate": "",
+            "Notes": description
+        }
+        print(f"Adding airdrop from airdrops.io: {name}")
+        airdrops.append(airdrop)
+
+    return airdrops
+
 def scrape_cryptorank():
-    """
-    Scrape airdrop/testnet data from CryptoRank.io.
-    Returns a list of dictionaries with data mapped to Notion columns.
-    """
+    """Scrape airdrop/testnet data from CryptoRank.io. Returns a list of standardized dictionaries."""
+    print("Starting to scrape CryptoRank.io...")
     try:
         response = requests.get(CRYPTORANK_URL, timeout=10)
-        response.raise_for_status()  # Raises an error for bad HTTP responses
+        response.raise_for_status()
+        print(f"Successfully fetched page: {CRYPTORANK_URL}")
     except requests.RequestException as e:
         print(f"Error fetching CryptoRank URL: {e}")
         return []
 
     soup = BeautifulSoup(response.content, "html.parser")
-    table = soup.find("table")  # Adjust if the HTML structure changes
+    # TODO: Update the selector based on actual HTML structure
+    table = soup.find("table")  # Placeholder
     if not table:
         print("No table found on CryptoRank page")
         return []
 
+    print("Table found, extracting rows...")
     rows = table.find("tbody").find_all("tr")
-    airdrops = []
+    print(f"Found {len(rows)} rows in the table")
 
+    airdrops = []
     for row in rows:
         cells = row.find_all("td")
-        if len(cells) < 6:  # Ensure there are enough cells
+        if len(cells) < 6:
+            print(f"Skipping row with insufficient cells: {len(cells)}")
             continue
 
-        # Extract data from table cells
         name = cells[0].find("a").text.strip() if cells[0].find("a") else "Unknown"
         task_link = "https://cryptorank.io" + cells[0].find("a")["href"] if cells[0].find("a") else ""
-        task_type_text = cells[1].text.strip()  # Contains tasks like "Social/Gaming"
-        status = cells[2].text.strip().split(",")[0].strip()  # e.g., "Confirmed"
-        reward_type = cells[3].text.strip()  # e.g., "Tokens"
+        task_type_text = cells[1].text.strip()
+        status = cells[2].text.strip().split(",")[0].strip()
+        reward_type = cells[3].text.strip()
 
-        # Determine Cost and Time Estimate using regex
+        # Extract Cost and Time Estimate
         cost_match = re.search(r"Cost: \$\s*(\d+)", task_type_text)
         cost = cost_match.group(1) if cost_match else "0"
         time_match = re.search(r"Time: (\d+) min", task_type_text)
@@ -62,7 +116,7 @@ def scrape_cryptorank():
         methods = [method.strip() for method in task_type_text.split(",") if method.strip()]
 
         # Determine Task Type
-        task_type = "Airdrop"  # Default
+        task_type = "Airdrop"
         if "Testnet" in methods:
             task_type = "Testnet"
         elif "Mainnet" in methods:
@@ -71,9 +125,9 @@ def scrape_cryptorank():
         # Filter out junk
         if any(keyword.lower() in name.lower() for keyword in EXCLUDE_KEYWORDS) or \
            any(any(keyword.lower() in method.lower() for keyword in EXCLUDE_KEYWORDS) for method in methods):
+            print(f"Filtered out entry: {name} (contains excluded keywords)")
             continue
 
-        # Map to Notion columns
         airdrop = {
             "Project Name": name,
             "Task Link": task_link,
@@ -81,25 +135,76 @@ def scrape_cryptorank():
             "Task Type": task_type,
             "Cost": "Minimal Gas" if int(cost) > 0 else "Free",
             "Time Estimate": time_estimate,
-            "Task Method": methods if methods else ["Hold"],  # Default method if none found
-            "Chain": "",  # To be determined (can add logic later)
-            "Difficulty": "",  # To be determined
+            "Task Method": methods if methods else ["Hold"],
+            "Chain": "",
+            "Difficulty": "",
             "Progress": "Not Started",
             "Risk Level": "DYOR",
-            "Value Estimate": "",  # To be determined
+            "Value Estimate": "",
             "Notes": f"Reward Type: {reward_type}" if reward_type else ""
         }
+        print(f"Adding airdrop from CryptoRank: {name}")
+        airdrops.append(airdrop)
+
+    return airdrops
+
+def scrape_airdropalert():
+    """Scrape airdrop data from AirdropAlert. Returns a list of standardized dictionaries."""
+    print("Starting to scrape AirdropAlert...")
+    try:
+        response = requests.get(AIRDROPALERT_URL, timeout=10)
+        response.raise_for_status()
+        print(f"Successfully fetched page: {AIRDROPALERT_URL}")
+    except requests.RequestException as e:
+        print(f"Error fetching AirdropAlert URL: {e}")
+        return []
+
+    soup = BeautifulSoup(response.content, "html.parser")
+    # TODO: Update the selector based on actual HTML structure
+    airdrop_cards = soup.find_all("div", class_="airdrop-card")  # Placeholder
+    if not airdrop_cards:
+        print("No airdrop cards found on AirdropAlert")
+        return []
+
+    print(f"Found {len(airdrop_cards)} airdrop cards")
+    airdrops = []
+    for card in airdrop_cards:
+        name = card.find("h3").text.strip() if card.find("h3") else "Unknown"
+        task_link = card.find("a")["href"] if card.find("a") else ""
+        description = card.find("p").text.strip() if card.find("p") else ""
+
+        # Filter out junk
+        if any(keyword.lower() in name.lower() or keyword.lower() in description.lower() for keyword in EXCLUDE_KEYWORDS):
+            print(f"Filtered out entry: {name} (contains excluded keywords)")
+            continue
+
+        airdrop = {
+            "Project Name": name,
+            "Task Link": task_link,
+            "Status": "Live",
+            "Task Type": "Airdrop",
+            "Cost": "Free",
+            "Time Estimate": "",
+            "Task Method": [],
+            "Chain": "",
+            "Difficulty": "",
+            "Progress": "Not Started",
+            "Risk Level": "DYOR",
+            "Value Estimate": "",
+            "Notes": description
+        }
+        print(f"Adding airdrop from AirdropAlert: {name}")
         airdrops.append(airdrop)
 
     return airdrops
 
 def update_notion(airdrops):
-    """
-    Update the Notion database with the scraped airdrop data.
-    """
+    """Update the Notion database with the scraped airdrop data."""
+    print("Starting to update Notion...")
     try:
         notion = Client(auth=os.environ["NOTION_TOKEN"])
         database_id = os.environ["DATABASE_ID"]
+        print(f"Connected to Notion, using database ID: {database_id}")
 
         for airdrop in airdrops:
             page = {
@@ -111,7 +216,7 @@ def update_notion(airdrops):
                     "Cost": {"select": {"name": airdrop["Cost"]}},
                     "Time Estimate": {"select": {"name": airdrop["Time Estimate"]}} if airdrop["Time Estimate"] else {"select": {}},
                     "Difficulty": {"select": {"name": airdrop["Difficulty"]}} if airdrop["Difficulty"] else {"select": {}},
-                    "Task Method": {"multi_select": [{"name": method} for method in airdrop["Task Method"]]},
+                    "Task Method": {"multi_select": [{"name": method} for method in airdrop["Task Method"]]} if airdrop["Task Method"] else {"multi_select": []},
                     "Progress": {"select": {"name": airdrop["Progress"]}},
                     "Status": {"select": {"name": airdrop["Status"]}},
                     "Risk Level": {"select": {"name": airdrop["Risk Level"]}},
@@ -120,22 +225,26 @@ def update_notion(airdrops):
                     "Notes": {"rich_text": [{"text": {"content": airdrop["Notes"]}}]} if airdrop["Notes"] else {"rich_text": []}
                 }
             }
+            print(f"Creating Notion page for: {airdrop['Project Name']}")
             notion.pages.create(**page)
-        print(f"Successfully updated Notion with {len(airdrops)} entries.")
+        print(f"Successfully updated Notion with {len(airdrops)} entries")
     except Exception as e:
         print(f"Error updating Notion: {e}")
 
 def main():
-    """
-    Main function to orchestrate scraping and updating.
-    """
-    # Scrape data
-    airdrops = scrape_cryptorank()
-    print(f"Scraped {len(airdrops)} entries from CryptoRank")
+    """Main function to scrape from all sources and update Notion."""
+    print("Starting main execution...")
+    all_airdrops = []
 
-    # Update Notion if there’s data
-    if airdrops:
-        update_notion(airdrops)
+    # Scrape from each source
+    all_airdrops.extend(scrape_airdrops_io())
+    all_airdrops.extend(scrape_cryptorank())
+    all_airdrops.extend(scrape_airdropalert())
+
+    print(f"Total airdrops after scraping from all sources: {len(all_airdrops)}")
+
+    if all_airdrops:
+        update_notion(all_airdrops)
     else:
         print("No airdrops to update after filtering")
 
